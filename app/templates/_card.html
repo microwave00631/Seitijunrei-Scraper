@@ -1,0 +1,15 @@
+<div class="card">
+  {% if s.screenshot_path %}
+    <img src="/screenshots/{{ s.screenshot_path.split('/')[-1] }}" alt="map" loading="lazy" />
+  {% else %}
+    <div class="noimg">スクショなし</div>
+  {% endif %}
+  <div class="body">
+    <p class="name">{{ s.name or "(名称なし)" }}</p>
+    <p class="meta">
+      📍 {{ "%.6f"|format(s.coordinate.lat) }}, {{ "%.6f"|format(s.coordinate.lon) }}<br />
+      🔎 クエリ: {{ s.query|e }}<br />
+      🔗 <a href="{{ s.source }}" target="_blank" rel="noopener">ソース</a>
+    </p>
+  </div>
+</div>
