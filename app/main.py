@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from .auth import BasicAuthMiddleware
 from .scraper import ScrapeConfig, scrape
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -24,6 +25,8 @@ SCREENSHOT_DIR = BASE_DIR.parent / "screenshots"
 SCREENSHOT_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="Seitijunrei-Scraper")
+# 簡易パスワード(Basic 認証)を全ルートに適用。設定は app/auth.py 参照。
+app.add_middleware(BasicAuthMiddleware)
 app.mount(
     "/screenshots",
     StaticFiles(directory=str(SCREENSHOT_DIR)),

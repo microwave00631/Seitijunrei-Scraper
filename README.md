@@ -34,12 +34,29 @@ pip install -r requirements.txt
 python -m playwright install chromium    # スクショ機能を使う場合のみ
 ```
 
-## 起動
+## 起動（ローカル）
 
 ```bash
 uvicorn app.main:app --reload
 # http://127.0.0.1:8000 にアクセス
 ```
+
+## 公開（簡易パスワード付き）
+
+全ルート（`/screenshots` 含む）に **HTTP Basic 認証**が掛かります。
+パスワードは環境変数で設定します。
+
+```bash
+export SEITI_USER=admin            # 既定: admin
+export SEITI_PASSWORD='強いパスワード'  # 既定: seichi（公開時は必ず変更）
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+- ブラウザでアクセスするとユーザー名／パスワードを求められます。
+- ローカル開発で認証を切るには `SEITI_AUTH=0`。
+- ⚠️ **Basic 認証は資格情報を Base64 で送るだけ**なので、インターネット公開時は
+  **必ず HTTPS（リバースプロキシ: Caddy / Nginx / Cloudflare 等）の背後**で運用し、
+  平文 HTTP で晒さないでください。
 
 - 検索窓に作品名等を入れて「検索」。`スクショ取得` を ON にすると各地点の
   地図 PNG を取得します（遅くなります）。
