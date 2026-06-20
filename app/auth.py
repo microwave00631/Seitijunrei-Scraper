@@ -47,8 +47,9 @@ def _check(header: str | None) -> bool:
     user, _, password = decoded.partition(":")
     exp_user, exp_password = _credentials()
     # タイミング攻撃を避けるため定数時間比較。
-    ok_user = secrets.compare_digest(user, exp_user)
-    ok_pass = secrets.compare_digest(password, exp_password)
+    # str のままだと非ASCII(日本語など)で TypeError になるため bytes で比較する。
+    ok_user = secrets.compare_digest(user.encode("utf-8"), exp_user.encode("utf-8"))
+    ok_pass = secrets.compare_digest(password.encode("utf-8"), exp_password.encode("utf-8"))
     return ok_user and ok_pass
 
 
@@ -62,6 +63,9 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             return Response(
                 status_code=401,
                 content="認証が必要です / Authentication required",
-                headers={"WWW-Authenticate": f'Basic realm="{_REALM}"'},
+                # charset=UTF-8 を明示し、非ASCIIパスワードを UTF-8 で受け取る。
+                headers={
+                    "WWW-Authenticate": f'Basic realm="{_REALM}", charset="UTF-8"'
+                },
             )
         return await call_next(request)

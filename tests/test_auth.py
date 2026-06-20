@@ -48,6 +48,15 @@ def test_correct_password_allows(monkeypatch):
     assert "検索" in r.text
 
 
+def test_non_ascii_password_works(monkeypatch):
+    # 日本語パスワードでも TypeError にならず認証できること。
+    main = _reload_app(monkeypatch, SEITI_USER="admin", SEITI_PASSWORD="ぱすわーど", SEITI_AUTH="1")
+    c = TestClient(main.app)
+    assert c.get("/").status_code == 401
+    assert c.get("/", headers=_basic("admin", "まちがい")).status_code == 401
+    assert c.get("/", headers=_basic("admin", "ぱすわーど")).status_code == 200
+
+
 def test_auth_can_be_disabled(monkeypatch):
     main = _reload_app(monkeypatch, SEITI_AUTH="0")
     c = TestClient(main.app)
