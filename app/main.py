@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from pathlib import Path
 
 from fastapi import FastAPI, Form
@@ -57,6 +58,18 @@ def _run_scrape(item: str, take_screenshots: bool) -> dict:
     return store.to_dict()
 
 
+async def _scrape_async(item: str, take_screenshots: bool) -> dict:
+    """同期 I/O(httpx/playwright)をスレッドプールで実行する。
+
+    asyncio.to_thread は Python 3.9+ なので、3.8 でも動くよう
+    run_in_executor を使う。
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, functools.partial(_run_scrape, item, take_screenshots)
+    )
+
+
 @app.post("/search", response_class=HTMLResponse)
 async def search(
     item: str = Form(...),
@@ -65,8 +78,7 @@ async def search(
     error = None
     result = None
     try:
-        # 同期 I/O(httpx/playwright)をイベントループから外して実行する。
-        result = await asyncio.to_thread(_run_scrape, item, screenshots)
+        result = await _scrape_async(item, screenshots)
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
     return HTMLResponse(render(item=item, result=result, error=error))
@@ -76,7 +88,7 @@ async def search(
 async def api_search(item: str, screenshots: bool = False) -> JSONResponse:
     """JSON で結果を返す API。"""
     try:
-        result = await asyncio.to_thread(_run_scrape, item, screenshots)
+        result = await _scrape_async(item, screenshots)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": str(exc)}, status_code=400)
     return JSONResponse(result)
