@@ -138,7 +138,10 @@ class NoteSource:
         import json as _json
         envelope = _json.loads(raw)
         if envelope.get("status") != 200:
-            raise SourceError(f"note 取得失敗(browser): HTTP {envelope.get('status')}")
+            body = (envelope.get("body") or "")[:160].replace("\n", " ")
+            raise SourceError(
+                f"note 取得失敗(browser): HTTP {envelope.get('status')} body={body!r}"
+            )
         try:
             return _json.loads(envelope["body"])
         except ValueError as e:
@@ -174,8 +177,12 @@ class NoteSource:
         if self.use_browser:
             try:
                 data = self._fetch_browser(url)
-            except SourceError:
-                data = self._fetch_httpx(url)  # ブラウザ失敗時の保険
+            except SourceError as be:
+                # フォールバックも失敗したら、両方の理由を残す(原因切り分け用)。
+                try:
+                    data = self._fetch_httpx(url)
+                except SourceError as he:
+                    raise SourceError(f"browser失敗[{be}] / httpx失敗[{he}]") from he
         else:
             data = self._fetch_httpx(url)
         return self._parse(data)
