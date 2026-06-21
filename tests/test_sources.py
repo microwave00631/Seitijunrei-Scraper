@@ -9,7 +9,7 @@ def test_strip_html():
     assert _strip_html("<p>あ&amp;い</p>") == "あ&い"
 
 
-def test_note_parses_v3_schema(monkeypatch):
+def test_note_parses_v3_schema():
     sample = {
         "data": {
             "notes": {
@@ -24,15 +24,7 @@ def test_note_parses_v3_schema(monkeypatch):
             }
         }
     }
-
-    src = NoteSource()
-
-    class FakeResp:
-        def raise_for_status(self): pass
-        def json(self): return sample
-
-    monkeypatch.setattr(src._client, "get", lambda *a, **k: FakeResp())
-    posts = src.search("作品 聖地巡礼")
+    posts = NoteSource(use_browser=False)._parse(sample)
     assert len(posts) == 1
     p = posts[0]
     assert isinstance(p, Post)
@@ -41,14 +33,44 @@ def test_note_parses_v3_schema(monkeypatch):
     assert p.author == "太郎"
 
 
+def test_note_parse_unknown_schema_returns_empty():
+    assert NoteSource(use_browser=False)._parse({"unexpected": 1}) == []
+
+
+def test_note_search_uses_browser_then_parses(monkeypatch):
+    sample = {"data": {"notes": {"contents": [
+        {"key": "k", "name": "大洗海岸", "body": "", "user": {"urlname": "u"}}
+    ]}}}
+    src = NoteSource(use_browser=True)
+    monkeypatch.setattr(src, "_fetch_browser", lambda url: sample)
+    posts = src.search("作品 聖地巡礼")
+    assert posts[0].title == "大洗海岸"
+
+
+def test_note_browser_failure_falls_back_to_httpx(monkeypatch):
+    sample = {"data": {"notes": {"contents": []}}}
+    src = NoteSource(use_browser=True)
+
+    def browser_boom(url):
+        raise SourceError("browser blew up")
+
+    monkeypatch.setattr(src, "_fetch_browser", browser_boom)
+    monkeypatch.setattr(src, "_fetch_httpx", lambda url: sample)
+    assert src.search("x") == []
+
+
 def test_note_http_error_raises_sourceerror(monkeypatch):
     import httpx
-    src = NoteSource()
+    src = NoteSource(use_browser=False)
 
-    def boom(*a, **k):
-        raise httpx.ConnectError("down")
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def get(self, *a, **k):
+            raise httpx.ConnectError("down")
 
-    monkeypatch.setattr(src._client, "get", boom)
+    monkeypatch.setattr(httpx, "Client", FakeClient)
     with pytest.raises(SourceError):
         src.search("x")
 
