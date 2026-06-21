@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from .aggregate import AggregateConfig, aggregate
+from .aggregate import AggregateConfig, aggregate, aggregate_from_text
 from .auth import BasicAuthMiddleware
 from .geocode import NominatimClient
 from .sources import NoteSource, TwitterSource
@@ -49,7 +49,7 @@ def render(**ctx) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
-    return HTMLResponse(render(item="", result=None, error=None))
+    return HTMLResponse(render(item="", pasted="", result=None, error=None))
 
 
 def _build_sources() -> list:
@@ -61,14 +61,21 @@ def _build_sources() -> list:
     return sources
 
 
-def _run_scrape(item: str, take_screenshots: bool) -> dict:
+def _run_scrape(item: str, pasted: str, take_screenshots: bool) -> dict:
     cfg = AggregateConfig(
         take_screenshots=take_screenshots,
         screenshot_dir=str(SCREENSHOT_DIR),
     )
     geocoder = NominatimClient()
     try:
-        store, meta = aggregate(item, _build_sources(), geocoder, cfg)
+        if pasted and pasted.strip():
+            # 貼り付けモード: ネットワーク取得せず、貼られた結果を解析する。
+            store, meta = aggregate_from_text(item, pasted, geocoder, cfg)
+            meta["mode"] = "paste"
+        else:
+            # 取得モード: note(+Twitter)から取得して集約する。
+            store, meta = aggregate(item, _build_sources(), geocoder, cfg)
+            meta["mode"] = "fetch"
     finally:
         geocoder.close()
     out = store.to_dict()
@@ -76,7 +83,7 @@ def _run_scrape(item: str, take_screenshots: bool) -> dict:
     return out
 
 
-async def _scrape_async(item: str, take_screenshots: bool) -> dict:
+async def _scrape_async(item: str, pasted: str, take_screenshots: bool) -> dict:
     """同期 I/O(httpx/playwright)をスレッドプールで実行する。
 
     asyncio.to_thread は Python 3.9+ なので、3.8 でも動くよう
@@ -84,29 +91,35 @@ async def _scrape_async(item: str, take_screenshots: bool) -> dict:
     """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        None, functools.partial(_run_scrape, item, take_screenshots)
+        None, functools.partial(_run_scrape, item, pasted, take_screenshots)
     )
 
 
 @app.post("/search", response_class=HTMLResponse)
 async def search(
-    item: str = Form(...),
+    item: str = Form(""),
+    pasted: str = Form(""),
     screenshots: bool = Form(False),
 ) -> HTMLResponse:
     error = None
     result = None
-    try:
-        result = await _scrape_async(item, screenshots)
-    except Exception as exc:  # noqa: BLE001
-        error = str(exc)
-    return HTMLResponse(render(item=item, result=result, error=error))
+    if not item.strip() and not pasted.strip():
+        error = "作品名か、貼り付ける検索結果のどちらかを入力してください。"
+    else:
+        try:
+            result = await _scrape_async(item, pasted, screenshots)
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)
+    return HTMLResponse(render(item=item, pasted=pasted, result=result, error=error))
 
 
 @app.get("/api/search")
-async def api_search(item: str, screenshots: bool = False) -> JSONResponse:
-    """JSON で結果を返す API。"""
+async def api_search(
+    item: str = "", screenshots: bool = False
+) -> JSONResponse:
+    """JSON で結果を返す API(取得モード)。"""
     try:
-        result = await _scrape_async(item, screenshots)
+        result = await _scrape_async(item, "", screenshots)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": str(exc)}, status_code=400)
     return JSONResponse(result)

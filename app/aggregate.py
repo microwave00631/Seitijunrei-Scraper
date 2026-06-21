@@ -7,12 +7,13 @@ note(と任意で Twitter 公式 API)で「項目 + 聖地巡礼」を検索し�
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .extract import extract_places
+from .extract import extract_coords, extract_places, extract_urls, strip_html
 from .geocode import NominatimClient
 from .models import Coordinate, Seiti, SeitiStore
 from .screenshot import capture_map
@@ -34,7 +35,6 @@ class AggregateConfig:
 
 
 def _slug(text: str) -> str:
-    import re
     return re.sub(r"[^\w一-鿿぀-ヿ]+", "_", text).strip("_")[:50] or "seiti"
 
 
@@ -121,6 +121,124 @@ def aggregate(
     meta = {
         "item": item,
         "posts_found": len(posts),
+        "places_extracted": len(place_to_urls),
+        "geocoded": geocoded,
+        "geocode_misses": geocode_misses,
+        "errors": errors,
+    }
+    return store, meta
+
+
+def _split_blocks(text: str) -> list[str]:
+    """貼り付けテキストを「行/空行区切り」のブロックに分割する。
+
+    検索結果は 1 件 = 数行であることが多いので、空行優先・なければ行単位。
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
+    if len(blocks) <= 1:
+        blocks = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    return blocks
+
+
+def aggregate_from_text(
+    item: str,
+    text: str,
+    geocoder: Optional[NominatimClient] = None,
+    cfg: Optional[AggregateConfig] = None,
+) -> tuple[SeitiStore, dict]:
+    """貼り付けた検索結果テキストを解析して Seiti にまとめる。
+
+    1) 地図リンク/座標を直接抽出(あれば Nominatim 不要)
+    2) 地名を抽出 → geocoder があれば座標化
+    3) 同一ブロック内の URL を出典として紐付け、1m 重複統合
+    """
+    if not text or not text.strip():
+        raise ValueError("text must be a non-empty string")
+    cfg = cfg or AggregateConfig()
+    store = SeitiStore(
+        dedup_radius_m=cfg.dedup_radius_m, max_candidates=cfg.max_candidates
+    )
+    errors: list[str] = []
+
+    blocks = _split_blocks(text)
+    place_to_urls: dict[str, list[str]] = defaultdict(list)
+    place_to_excerpt: dict[str, str] = {}
+    direct_count = 0
+
+    for block in blocks:
+        clean = strip_html(block)
+        urls = extract_urls(block)
+        coords = extract_coords(block)
+        # 近くにある地名(あれば名前として使う)。
+        places = extract_places(clean, max_places=cfg.max_places)
+
+        # (1) 座標が直接ある → その場で Seiti 化(geocode 不要)。
+        for lat, lon in coords:
+            store.add(
+                Seiti(
+                    coordinate=Coordinate(lat, lon),
+                    source=urls[0] if urls else "pasted",
+                    name=places[0] if places else f"{lat:.5f},{lon:.5f}",
+                    query=item,
+                    mentions=list(urls),
+                    excerpt=clean[:140],
+                )
+            )
+            direct_count += 1
+
+        # (2) 地名 → 後段でまとめて geocode。URL が無くても地名は登録する。
+        for place in places:
+            bucket = place_to_urls[place]  # defaultdict が空リストを作る
+            for u in urls:
+                if u not in bucket:
+                    bucket.append(u)
+            place_to_excerpt.setdefault(place, clean[:140])
+
+    # (2 続き) 地名を言及数順に geocode。
+    geocoded = 0
+    geocode_misses: list[str] = []
+    if geocoder is not None:
+        ranked = sorted(place_to_urls.items(), key=lambda kv: len(kv[1]), reverse=True)
+        for place, urls in ranked:
+            if geocoded >= cfg.max_places:
+                break
+            try:
+                results = geocoder.search(place, limit=1, countrycodes=cfg.countrycodes)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"[geocode] {place}: {e}")
+                continue
+            geocoded += 1
+            if not results:
+                geocode_misses.append(place)
+                continue
+            g = results[0]
+            shot = None
+            if cfg.take_screenshots:
+                out = str(Path(cfg.screenshot_dir) / f"{_slug(place)}.png")
+                shot = capture_map(g.lat, g.lon, out)
+            store.add(
+                Seiti(
+                    coordinate=Coordinate(g.lat, g.lon),
+                    source=urls[0] if urls else g.source_url,
+                    screenshot_path=shot,
+                    name=place,
+                    query=item,
+                    mentions=list(urls),
+                    excerpt=place_to_excerpt.get(place, ""),
+                )
+            )
+    elif place_to_urls:
+        errors.append(
+            "座標を含まない地名がありますが geocoder 未指定のため座標化していません"
+        )
+
+    store.seiti.sort(key=lambda s: len(s.mentions), reverse=True)
+
+    meta = {
+        "item": item,
+        "blocks": len(blocks),
+        "direct_coords": direct_count,
         "places_extracted": len(place_to_urls),
         "geocoded": geocoded,
         "geocode_misses": geocode_misses,

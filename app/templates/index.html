@@ -42,9 +42,11 @@
   </header>
   <main>
     <form method="post" action="/search">
-      <input type="text" name="item" placeholder="例: らき☆すた / ガルパン / 君の名は" value="{{ item|e }}" required />
+      <input type="text" name="item" placeholder="作品名（ラベル用・任意）例: らき☆すた" value="{{ item|e }}" style="flex-basis:100%;" />
+      <textarea name="pasted" placeholder="ここにブラウザでコピーした検索結果（note記事一覧・ブログ本文・Google Mapリンクなど）を貼り付け。地図リンク/座標があればそのまま、なければ地名を抽出して座標化します。" style="flex-basis:100%; min-height:160px; padding:11px 13px; font-size:14px; border:1px solid var(--line); border-radius:8px; font-family:inherit;">{{ pasted|e }}</textarea>
       <label class="cb"><input type="checkbox" name="screenshots" value="true" /> スクショ取得（遅い）</label>
-      <button type="submit">検索</button>
+      <button type="submit">まとめる</button>
+      <span style="font-size:12px;color:var(--muted);">貼り付けが空なら note から取得を試みます</span>
     </form>
 
     {% if error %}
@@ -56,8 +58,14 @@
         聖地: {{ result.seiti|length }} 件 ／ 候補: {{ result.candidates|length }} / {{ result.max_candidates }} 件
         （統合しきい値 {{ result.dedup_radius_m }}m）
         {% if result.meta %}
-          <br />取得投稿: {{ result.meta.posts_found }} 件 ／ 抽出地名: {{ result.meta.places_extracted }} ／
-          ジオコーディング成功: {{ result.meta.geocoded }}
+          {% if result.meta.mode == "paste" %}
+            <br />モード: 貼り付け解析 ／ ブロック: {{ result.meta.blocks }} ／
+            座標直接: {{ result.meta.direct_coords }} ／ 抽出地名: {{ result.meta.places_extracted }} ／
+            ジオコーディング成功: {{ result.meta.geocoded }}
+          {% else %}
+            <br />モード: 取得 ／ 取得投稿: {{ result.meta.posts_found }} 件 ／
+            抽出地名: {{ result.meta.places_extracted }} ／ ジオコーディング成功: {{ result.meta.geocoded }}
+          {% endif %}
         {% endif %}
       </div>
 
