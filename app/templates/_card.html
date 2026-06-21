@@ -5,11 +5,14 @@
     <div class="noimg">スクショなし</div>
   {% endif %}
   <div class="body">
-    <p class="name">{{ s.name or "(名称なし)" }}</p>
+    <p class="name">{{ s.name or "(名称なし)" }}
+      {% if s.mentions %}<span style="color:#c0392b;">× {{ s.mentions|length }}</span>{% endif %}
+    </p>
     <p class="meta">
       📍 {{ "%.6f"|format(s.coordinate.lat) }}, {{ "%.6f"|format(s.coordinate.lon) }}<br />
-      🔎 クエリ: {{ s.query|e }}<br />
-      🔗 <a href="{{ s.source }}" target="_blank" rel="noopener">ソース</a>
+      {% if s.excerpt %}📝 {{ s.excerpt|e }}<br />{% endif %}
+      🔗 出典:
+      {% for u in (s.mentions or [s.source]) %}<a href="{{ u }}" target="_blank" rel="noopener">[{{ loop.index }}]</a> {% endfor %}
     </p>
   </div>
 </div>

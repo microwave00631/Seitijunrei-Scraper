@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Form
@@ -18,8 +19,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from .aggregate import AggregateConfig, aggregate
 from .auth import BasicAuthMiddleware
-from .scraper import ScrapeConfig, scrape
+from .geocode import NominatimClient
+from .sources import NoteSource, TwitterSource
 
 BASE_DIR = Path(__file__).resolve().parent
 SCREENSHOT_DIR = BASE_DIR.parent / "screenshots"
@@ -49,13 +52,28 @@ async def index() -> HTMLResponse:
     return HTMLResponse(render(item="", result=None, error=None))
 
 
+def _build_sources() -> list:
+    """note は常に有効。Twitter は公式トークンがある時のみ有効。"""
+    sources: list = [NoteSource()]
+    token = os.environ.get("TWITTER_BEARER_TOKEN")
+    if token:
+        sources.append(TwitterSource(bearer_token=token))
+    return sources
+
+
 def _run_scrape(item: str, take_screenshots: bool) -> dict:
-    cfg = ScrapeConfig(
+    cfg = AggregateConfig(
         take_screenshots=take_screenshots,
         screenshot_dir=str(SCREENSHOT_DIR),
     )
-    store = scrape(item, cfg)
-    return store.to_dict()
+    geocoder = NominatimClient()
+    try:
+        store, meta = aggregate(item, _build_sources(), geocoder, cfg)
+    finally:
+        geocoder.close()
+    out = store.to_dict()
+    out["meta"] = meta
+    return out
 
 
 async def _scrape_async(item: str, take_screenshots: bool) -> dict:

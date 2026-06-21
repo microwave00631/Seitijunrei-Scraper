@@ -65,6 +65,8 @@ class Seiti:
         screenshot_path: スクリーンショット画像へのパス(取得できない場合 None)。
         name: 表示名(任意)。
         query: この聖地を見つけた検索クエリ(任意)。
+        mentions: この地点に言及した出典 URL のリスト(note 記事など)。
+        excerpt: 出典本文からの抜粋(任意)。
         found_at: 作成時刻(エポック秒)。候補の破棄順序に使う。
     """
 
@@ -73,11 +75,23 @@ class Seiti:
     screenshot_path: Optional[str] = None
     name: str = ""
     query: str = ""
+    mentions: list[str] = field(default_factory=list)
+    excerpt: str = ""
     found_at: float = field(default_factory=time.time)
 
     def is_same_place(self, other: "Seiti", radius_m: float = DEFAULT_DEDUP_RADIUS_M) -> bool:
         """座標が radius_m 以内なら同一の聖地とみなす。"""
         return self.coordinate.distance_to(other.coordinate) <= radius_m
+
+    def merge_mentions_from(self, other: "Seiti") -> None:
+        """別 Seiti の出典をこの Seiti に取り込む(重複 URL は除外)。"""
+        seen = set(self.mentions)
+        for url in other.mentions:
+            if url not in seen:
+                self.mentions.append(url)
+                seen.add(url)
+        if not self.excerpt and other.excerpt:
+            self.excerpt = other.excerpt
 
     def completeness(self) -> int:
         """情報量の簡易スコア。統合時にどちらを残すか決めるのに使う。"""
@@ -88,6 +102,7 @@ class Seiti:
             score += 1
         if self.source:
             score += 1
+        score += min(len(self.mentions), 5)  # 言及が多い方を優先。
         return score
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,10 +160,13 @@ class SeitiStore:
 
         existing = self.seiti[idx]
         # 情報量が多い方を残す。同点なら先に登録された既存を優先(消える側=新規)。
+        # どちらを残す場合でも、出典(言及)は survivor に集約する(=まとめ直し)。
         if item.completeness() > existing.completeness():
+            item.merge_mentions_from(existing)
             self.seiti[idx] = item       # 新規を採用
             self._push_candidate(existing)  # 既存が消える側 → 候補へ
         else:
+            existing.merge_mentions_from(item)
             self._push_candidate(item)   # 新規が消える側 → 候補へ
         return False
 

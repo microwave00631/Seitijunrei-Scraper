@@ -55,7 +55,20 @@
       <div class="summary">
         聖地: {{ result.seiti|length }} 件 ／ 候補: {{ result.candidates|length }} / {{ result.max_candidates }} 件
         （統合しきい値 {{ result.dedup_radius_m }}m）
+        {% if result.meta %}
+          <br />取得投稿: {{ result.meta.posts_found }} 件 ／ 抽出地名: {{ result.meta.places_extracted }} ／
+          ジオコーディング成功: {{ result.meta.geocoded }}
+        {% endif %}
       </div>
+
+      {% if result.meta and result.meta.errors %}
+        <div class="error">
+          取得エラー（{{ result.meta.errors|length }}件）— 0件の原因切り分け用:
+          <ul style="margin:6px 0 0; padding-left:18px;">
+            {% for e in result.meta.errors[:8] %}<li>{{ e|e }}</li>{% endfor %}
+          </ul>
+        </div>
+      {% endif %}
 
       {% if result.seiti %}
         <div class="grid">

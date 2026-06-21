@@ -79,8 +79,13 @@ class NominatimClient:
             timeout=timeout_s,
         )
 
-    def search(self, query: str, limit: int = 5) -> list[GeoResult]:
-        """クエリで地点を検索して GeoResult のリストを返す。"""
+    def search(
+        self, query: str, limit: int = 5, countrycodes: Optional[str] = None
+    ) -> list[GeoResult]:
+        """クエリで地点を検索して GeoResult のリストを返す。
+
+        countrycodes: "jp" 等で国を限定(聖地は日本前提なので既定で絞れる)。
+        """
         self._limiter.wait()
         params = {
             "q": query,
@@ -89,6 +94,8 @@ class NominatimClient:
             "accept-language": self.accept_language,
             "addressdetails": "0",
         }
+        if countrycodes:
+            params["countrycodes"] = countrycodes
         resp = self._client.get(self.base_url, params=params)
         resp.raise_for_status()
         data = resp.json()
