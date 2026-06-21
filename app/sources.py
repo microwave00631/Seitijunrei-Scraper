@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol
@@ -62,29 +63,67 @@ def _dig(data: Any, *paths: tuple[str, ...]) -> Any:
 class NoteSource:
     """note(note.com)の検索。内部の検索 JSON エンドポイントを利用する。
 
-    注意: note の自動取得は規約上グレー。低頻度・私的利用を前提とし、
-    User-Agent を明示する。
+    note の前段(WAF)は非ブラウザ UA を 403 で弾くため、ブラウザ相当のヘッダを
+    送り、初回にトップページへアクセスしてクッキーを取得(ウォームアップ)する。
+
+    注意: note の自動取得は規約上グレー。低頻度・私的利用を前提とすること。
+    User-Agent は環境変数 NOTE_USER_AGENT で上書きできる。
     """
 
     name = "note"
     SEARCH_URL = "https://note.com/api/v3/searches"
+    HOME_URL = "https://note.com/"
+    DEFAULT_UA = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
 
     def __init__(
         self,
-        user_agent: str = "Seitijunrei-Scraper/0.1 (private use)",
+        user_agent: Optional[str] = None,
         timeout_s: float = 15.0,
     ) -> None:
+        ua = user_agent or os.environ.get("NOTE_USER_AGENT") or self.DEFAULT_UA
         self._client = httpx.Client(
-            headers={"User-Agent": user_agent, "Accept": "application/json"},
+            headers={
+                "User-Agent": ua,
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://note.com/search",
+            },
             timeout=timeout_s,
+            follow_redirects=True,
         )
+        self._warmed = False
+
+    def _warmup(self) -> None:
+        """トップページに 1 回アクセスしてクッキーを取得する。"""
+        if self._warmed:
+            return
+        try:
+            self._client.get(self.HOME_URL)
+        except httpx.HTTPError:
+            pass  # 失敗しても本リクエストを試す。
+        self._warmed = True
 
     def search(self, query: str, limit: int = 20) -> list[Post]:
+        self._warmup()
         params = {"context": "note", "q": query, "size": str(limit), "start": "0"}
         try:
             resp = self._client.get(self.SEARCH_URL, params=params)
             resp.raise_for_status()
             data = resp.json()
+        except httpx.HTTPStatusError as e:
+            code = e.response.status_code
+            hint = ""
+            if code == 403:
+                hint = (
+                    "（note の bot 対策でブロックされた可能性。NOTE_USER_AGENT を"
+                    "実ブラウザの値に変える/頻度を下げる等を試してください）"
+                )
+            raise SourceError(f"note 取得失敗: HTTP {code}{hint}") from e
         except httpx.HTTPError as e:
             raise SourceError(f"note 取得失敗: {e}") from e
         except ValueError as e:
